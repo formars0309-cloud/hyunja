@@ -69,17 +69,37 @@ def cmd_for(agent, q, tmpdir):
     return table[agent], out
 
 
+def resolve_cmd(cmd):
+    exe = shutil.which(cmd[0])
+    if not exe:
+        return None
+    # 윈도우에서 .cmd 배치 파일로 인자를 넘기면 줄바꿈(\n)이 첫 줄에서 잘리는 cmd.exe의 %* 한계가 있다.
+    # 따라서 codex.cmd나 grok.cmd처럼 알려진 래퍼는 실제 실행 파일(.exe / node 스크립트)로 직접 푼다.
+    if sys.platform == 'win32' and exe.lower().endswith('.cmd'):
+        name = os.path.splitext(os.path.basename(cmd[0]))[0].lower()
+        if name == 'codex':
+            import glob
+            codexes = sorted(glob.glob(os.path.expandvars(r'%LOCALAPPDATA%\OpenAI\Codex\bin\*\codex.exe')), reverse=True)
+            if codexes:
+                return [codexes[0]] + cmd[1:]
+        elif name == 'grok':
+            node = shutil.which('node')
+            js = os.path.join(os.path.dirname(exe), 'node_modules', '@xai-official', 'grok', 'bin', 'grok')
+            if node and os.path.exists(js):
+                return [node, js] + cmd[1:]
+    return [exe] + cmd[1:]
+
+
 def ask(agent, q, timeout, cwd, tmpdir):
     cmd, outfile = cmd_for(agent, q, tmpdir)
     if cmd is None:
         return agent, '(모르는 이름: %s. 가능: %s)' % (agent, DEFAULT_AGENTS), 0.0
-    exe = shutil.which(cmd[0])  # 윈도우 .cmd 셔틀도 찾는다
-    if not exe:
+    real_cmd = resolve_cmd(cmd)
+    if not real_cmd:
         return agent, '(CLI 없음: %s)' % cmd[0], 0.0
-    cmd[0] = exe
     t0 = time.time()
     try:
-        p = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='replace',
+        p = subprocess.run(real_cmd, capture_output=True, text=True, encoding='utf-8', errors='replace',
                            timeout=timeout, cwd=cwd, stdin=subprocess.DEVNULL)
         text = ''
         if agent == 'codex' and os.path.exists(outfile):
