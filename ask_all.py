@@ -113,6 +113,13 @@ def open_in_browser(path):
 
 
 def main():
+    try:
+        sys.stdin.reconfigure(encoding='utf-8', errors='replace')
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+
     ap = argparse.ArgumentParser(description='여러 AI CLI에 동시에 질문')
     ap.add_argument('question', nargs='?', help='질문. 없으면 stdin에서 읽는다')
     ap.add_argument('-a', '--agents', default=DEFAULT_AGENTS, help='쉼표로 구분 (기본: %s)' % DEFAULT_AGENTS)
@@ -121,6 +128,7 @@ def main():
     ap.add_argument('--commit', action='store_true', help='작업 폴더가 git 저장소면 answers/ 를 곧바로 커밋한다')
     args = ap.parse_args()
     q = (args.question or sys.stdin.read()).strip()
+    q = q.encode('utf-8', errors='replace').decode('utf-8')
     if not q:
         ap.error('질문이 비었습니다')
     agents = [a.strip() for a in args.agents.split(',') if a.strip()]
@@ -140,9 +148,9 @@ def main():
     md = ['# %s' % q, '', '_%s_' % stamp, '']
     for agent, text, sec in results:
         md += ['## %s (%.0f초)' % (agent, sec), '', text, '']
-    (outdir / (stamp + '.md')).write_text('\n'.join(md), encoding='utf-8')
+    (outdir / (stamp + '.md')).write_text('\n'.join(md), encoding='utf-8', errors='replace')
     htmlpath = outdir / (stamp + '.html')
-    htmlpath.write_text(render_html(q, stamp, results), encoding='utf-8')
+    htmlpath.write_text(render_html(q, stamp, results), encoding='utf-8', errors='replace')
 
     if commit and (cwd / '.git').exists():
         subprocess.run(['git', '-C', str(cwd), 'add', 'answers'], capture_output=True)
