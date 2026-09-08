@@ -61,8 +61,8 @@ def cmd_for(agent, q, tmpdir):
         'claude': ['claude', '-p', q],
         'codex': ['codex', 'exec', '--skip-git-repo-check', '-s', 'read-only', '-o', out, q],
         'grok': ['grok', '-p', q],
-        'antigravity': ['agy', '-p', q],
-        'gemini': ['agy', '-p', q],  # 옛 이름. 제미나이 CLI는 2026-06-18부터 구글 로그인이 막혀 Antigravity(agy)로 대신한다
+        'antigravity': ['agy', '--dangerously-skip-permissions', '-p', q],
+        'gemini': ['agy', '--dangerously-skip-permissions', '-p', q],  # 옛 이름. 제미나이 CLI는 2026-06-18부터 구글 로그인이 막혀 Antigravity(agy)로 대신한다
     }
     if agent not in table:
         return None, out
@@ -122,12 +122,16 @@ def main():
 
     ap = argparse.ArgumentParser(description='여러 AI CLI에 동시에 질문')
     ap.add_argument('question', nargs='?', help='질문. 없으면 stdin에서 읽는다')
+    ap.add_argument('-f', '--file', help='질문 파일 경로 (파일에서 UTF-8로 직접 읽음)')
     ap.add_argument('-a', '--agents', default=DEFAULT_AGENTS, help='쉼표로 구분 (기본: %s)' % DEFAULT_AGENTS)
     ap.add_argument('-t', '--timeout', type=int, default=300, help='CLI마다 최대 대기 초 (기본 300)')
     ap.add_argument('--no-open', action='store_true', help='결과 HTML을 브라우저로 열지 않는다')
     ap.add_argument('--commit', action='store_true', help='작업 폴더가 git 저장소면 answers/ 를 곧바로 커밋한다')
     args = ap.parse_args()
-    q = (args.question or sys.stdin.read()).strip()
+    if args.file:
+        q = pathlib.Path(args.file).read_text(encoding='utf-8-sig', errors='replace').strip()
+    else:
+        q = (args.question or sys.stdin.read()).strip()
     q = q.encode('utf-8', errors='replace').decode('utf-8')
     if not q:
         ap.error('질문이 비었습니다')
