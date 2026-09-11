@@ -76,3 +76,16 @@ echo "여러 줄 질문" | askall     # stdin
 ## 라이선스
 
 MIT
+
+## Claude 사용 한도 자동 재시도
+
+기본 모델(Fable 등)이 `You've reached your Fable limit` 또는 `You've hit your limit` 형태의 사용량 소진 오류를 반환하면 같은 질문을 **Opus 5 (`claude-opus-5`)로 한 번 재시도**한다. 새 질문은 다시 기본 모델부터 시작하므로 한도 초기화 뒤 자동으로 원래 모델을 쓴다. Claude 자체의 전역 기본 모델은 바꾸지 않는다.
+
+- 성공한 일반 답변에 한도 안내가 인용돼 있어도 재시도하지 않는다. 인증 오류·네트워크 오류·타임아웃도 전환 대상이 아니다.
+- 대체 모델도 실패하면 그 오류를 표시하고 멈춘다. 추가 결제·다른 모델로의 연쇄 재시도는 하지 않는다.
+- 기본 실행과 재시도를 합쳐 `-t`의 총 대기 시간을 적용한다.
+- 결과의 Claude 열에 사용한 대체 모델을 표시한다. 터미널에서도 전환을 알린다.
+- `HYUNJA_CLAUDE_FALLBACK_MODEL` 기본값은 `claude-opus-5`. 환경변수 또는 `~/.config/hyunja/env`에서 바꿀 수 있으며 빈 값이면 자동 재시도를 끈다.
+- `현자`, `askall`, Python 직접 실행 및 연결된 Claude/Codex 스킬 모두 같은 전역 원본을 사용한다.
+
+검증: `python3 -m unittest discover -s tests -v`.

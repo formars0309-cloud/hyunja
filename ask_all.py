@@ -19,6 +19,8 @@ import datetime
 import html
 import os
 import pathlib
+import json
+import re
 import shutil
 import subprocess
 import sys
@@ -28,6 +30,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 HERE = pathlib.Path(__file__).resolve().parent
 DEFAULT_AGENTS = 'claude,codex,grok,antigravity'
+DEFAULT_CLAUDE_FALLBACK = 'claude-opus-5'
 
 
 def load_env_file():
@@ -58,7 +61,7 @@ def cmd_for(agent, q, tmpdir):
     # codex는 진행 로그를 stdout에 찍으므로 최종 답만 -o 파일로 받는다
     out = os.path.join(tmpdir, 'codex-last.md')
     table = {
-        'claude': ['claude', '-p', q],
+        'claude': ['claude', '-p', q, '--output-format', 'json'],
         'codex': ['codex', 'exec', '--skip-git-repo-check', '-s', 'read-only', '-o', out, q],
         'grok': ['grok', '-p', q],
         'antigravity': ['agy', '--dangerously-skip-permissions', '-p', q],
@@ -89,6 +92,59 @@ def resolve_cmd(cmd):
                 return [node, js] + cmd[1:]
     return [exe] + cmd[1:]
 
+def claude_result(process):
+    """구조화된 결과를 우선 읽고, CLI 자체의 사용 한도 안내만 판별한다."""
+    stdout, stderr = (process.stdout or '').strip(), (process.stderr or '').strip()
+    body = stdout or stderr or '(빈 응답, 종료코드 %s)' % process.returncode
+    # 현재 CLI는 한 객체를 출력한다. 진단 줄이 섞인 버전도 마지막 결과를 읽는다.
+    for candidate in [stdout] + list(reversed(stdout.splitlines())):
+        try:
+            result = json.loads(candidate)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(result, dict) and result.get('type') == 'result':
+            body = result.get('result') or '\n'.join(map(str, result.get('errors', []))) or body
+            # 정상 답변이 한도 안내를 인용해도 재시도하지 않는다.
+            if not result.get('is_error', False):
+                return str(body), False
+            return str(body), is_usage_limit(str(body))
+    return body, any(is_usage_limit(value) for value in (stdout, stderr))
+
+
+def is_usage_limit(message):
+    """인증·네트워크·모델 오류는 제외하고 사용량 소진 안내만 허용한다."""
+    return bool(re.match(
+        r"^you[’']ve (?:reached|hit) your (?:[a-z0-9 ._-]+ )?limit(?:[.!,;: \n]|$)",
+        message.strip(), re.IGNORECASE))
+
+
+def ask_claude(cmd, timeout, cwd):
+    """총 대기 한도 안에서 Opus 5로 한 번만 재시도한다."""
+    deadline = time.monotonic() + timeout
+    notice = ''
+    for attempt in range(2):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return notice + '(타임아웃 %d초)' % timeout
+        try:
+            process = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8',
+                                     errors='replace', timeout=remaining, cwd=cwd,
+                                     stdin=subprocess.DEVNULL)
+        except subprocess.TimeoutExpired:
+            return notice + '(타임아웃 %d초)' % timeout
+        body, limited = claude_result(process)
+        if not limited or attempt == 1:
+            if attempt and (limited or process.returncode != 0):
+                return notice + '(대체 모델 재시도 실패)\n' + body
+            return notice + body
+        model = os.environ.get('HYUNJA_CLAUDE_FALLBACK_MODEL', DEFAULT_CLAUDE_FALLBACK).strip()
+        if not model:
+            return body
+        notice = '[Claude 자동 재시도: 기본 모델 사용 한도 → %s]\n\n' % model
+        print(notice.strip(), file=sys.stderr, flush=True)
+        cmd = [*cmd, '--model', model]
+    raise AssertionError('재시도 횟수 초과')
+
 
 def ask(agent, q, timeout, cwd, tmpdir):
     cmd, outfile = cmd_for(agent, q, tmpdir)
@@ -98,6 +154,8 @@ def ask(agent, q, timeout, cwd, tmpdir):
     if not real_cmd:
         return agent, '(CLI 없음: %s)' % cmd[0], 0.0
     t0 = time.time()
+    if agent == 'claude':
+        return agent, ask_claude(real_cmd, timeout, cwd), time.time() - t0
     try:
         p = subprocess.run(real_cmd, capture_output=True, text=True, encoding='utf-8', errors='replace',
                            timeout=timeout, cwd=cwd, stdin=subprocess.DEVNULL)
